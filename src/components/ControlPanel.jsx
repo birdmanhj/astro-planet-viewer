@@ -1,10 +1,99 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
+
+// SVG 图标：尺寸完全一致，不依赖字体渲染
+const IconBack2 = () => (
+  <svg width="14" height="10" viewBox="0 0 14 10" fill="currentColor" style={{ display: 'inline' }}>
+    <polygon points="13,1 7,5 13,9" /><polygon points="6,1 0,5 6,9" />
+  </svg>
+);
+const IconBack1 = () => (
+  <svg width="8" height="10" viewBox="0 0 8 10" fill="currentColor" style={{ display: 'inline' }}>
+    <polygon points="7,1 1,5 7,9" />
+  </svg>
+);
+const IconFwd1 = () => (
+  <svg width="8" height="10" viewBox="0 0 8 10" fill="currentColor" style={{ display: 'inline' }}>
+    <polygon points="1,1 7,5 1,9" />
+  </svg>
+);
+const IconFwd2 = () => (
+  <svg width="14" height="10" viewBox="0 0 14 10" fill="currentColor" style={{ display: 'inline' }}>
+    <polygon points="1,1 7,5 1,9" /><polygon points="8,1 14,5 8,9" />
+  </svg>
+);
 
 const TIME_STEPS = [
   { label: '1小时', ms: 3600000 },
   { label: '1天', ms: 86400000 },
   { label: '1月', ms: 2592000000 },
 ];
+
+// 分段日期时间输入组件
+// 上下键：增减当前段；左右键：切换焦点段
+function DateTimeInput({ value, onChange, disabled }) {
+  const segRefs = useRef([null, null, null, null, null]);
+
+  const d = value instanceof Date ? value : new Date();
+  const segments = [
+    { key: 'year',   val: d.getFullYear(),   min: 1,  max: 9999, pad: 4 },
+    { key: 'month',  val: d.getMonth() + 1,  min: 1,  max: 12,   pad: 2 },
+    { key: 'day',    val: d.getDate(),        min: 1,  max: 31,   pad: 2 },
+    { key: 'hour',   val: d.getHours(),       min: 0,  max: 23,   pad: 2 },
+    { key: 'minute', val: d.getMinutes(),     min: 0,  max: 59,   pad: 2 },
+  ];
+
+  const applyChange = (idx, newVal) => {
+    const nd = new Date(d);
+    if (idx === 0) nd.setFullYear(newVal);
+    else if (idx === 1) { nd.setMonth(newVal - 1); }
+    else if (idx === 2) nd.setDate(newVal);
+    else if (idx === 3) nd.setHours(newVal);
+    else if (idx === 4) nd.setMinutes(newVal);
+    onChange(nd);
+  };
+
+  const handleKeyDown = (e, idx) => {
+    if (disabled) return;
+    const seg = segments[idx];
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      applyChange(idx, seg.val >= seg.max ? seg.min : seg.val + 1);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      applyChange(idx, seg.val <= seg.min ? seg.max : seg.val - 1);
+    } else if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      if (idx < 4) segRefs.current[idx + 1]?.focus();
+    } else if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      if (idx > 0) segRefs.current[idx - 1]?.focus();
+    }
+  };
+
+  const SEP = ['−', '−', ' ', ':'];
+
+  return (
+    <div
+      className={`flex items-center bg-gray-800 rounded px-2 py-1.5 text-xs font-mono ${disabled ? 'opacity-50 pointer-events-none' : ''}`}
+    >
+      {segments.map((seg, idx) => (
+        <span key={seg.key} className="flex items-center">
+          <span
+            ref={el => { segRefs.current[idx] = el; }}
+            tabIndex={disabled ? -1 : 0}
+            onKeyDown={e => handleKeyDown(e, idx)}
+            className="outline-none focus:bg-blue-700 rounded px-0.5 cursor-default select-none text-white"
+          >
+            {String(seg.val).padStart(seg.pad, '0')}
+          </span>
+          {idx < 4 && (
+            <span className="text-gray-500 select-none px-px">{SEP[idx]}</span>
+          )}
+        </span>
+      ))}
+    </div>
+  );
+}
 
 export default function ControlPanel({
   mode, onModeChange,
@@ -15,7 +104,7 @@ export default function ControlPanel({
   locationStatus, onRequestLocation,
   isMobile, isOpen, onToggle,
 }) {
-  const [step, setStep] = useState(1); // 0=1h, 1=1d, 2=1m
+  const [step, setStep] = useState(1);
   const [customLat, setCustomLat] = useState('');
   const [customLng, setCustomLng] = useState('');
   const [showLocationInput, setShowLocationInput] = useState(false);
@@ -27,16 +116,6 @@ export default function ControlPanel({
     return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
   };
 
-  const toInputValue = (d) => {
-    const pad = n => String(n).padStart(2, '0');
-    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  };
-
-  const handleTimeInput = (e) => {
-    const d = new Date(e.target.value);
-    if (!isNaN(d)) onTimeChange(d);
-  };
-
   const handleLocationSubmit = () => {
     const lat = parseFloat(customLat);
     const lng = parseFloat(customLng);
@@ -45,6 +124,8 @@ export default function ControlPanel({
       setShowLocationInput(false);
     }
   };
+
+  const btnCls = 'flex-1 bg-gray-700 hover:bg-gray-600 rounded py-1 text-sm leading-none disabled:opacity-40';
 
   const content = (
     <div className="flex flex-col gap-4 p-4 text-sm text-gray-200">
@@ -121,38 +202,18 @@ export default function ControlPanel({
       {/* 观测时间 */}
       <div>
         <div className="text-xs text-gray-400 mb-1">观测时间</div>
-        <input
-          type="datetime-local"
-          value={toInputValue(time)}
-          onChange={handleTimeInput}
-          disabled={mode === 'local'}
-          className="w-full bg-gray-800 rounded px-2 py-1.5 text-xs text-white outline-none disabled:opacity-50"
-        />
+        <DateTimeInput value={time} onChange={onTimeChange} disabled={mode === 'local'} />
         <div className="flex gap-1 mt-2">
-          <button
-            onClick={() => onTimeChange(new Date(time.getTime() - stepMs * 10))}
-            className="flex-1 bg-gray-700 hover:bg-gray-600 rounded py-1 text-xs"
-            disabled={mode === 'local'}
-          >◄◄</button>
-          <button
-            onClick={() => onTimeChange(new Date(time.getTime() - stepMs))}
-            className="flex-1 bg-gray-700 hover:bg-gray-600 rounded py-1 text-xs"
-            disabled={mode === 'local'}
-          >◄</button>
-          <button
-            onClick={() => onTimeChange(new Date())}
-            className="flex-1 bg-gray-700 hover:bg-gray-600 rounded py-1 text-xs"
-          >现在</button>
-          <button
-            onClick={() => onTimeChange(new Date(time.getTime() + stepMs))}
-            className="flex-1 bg-gray-700 hover:bg-gray-600 rounded py-1 text-xs"
-            disabled={mode === 'local'}
-          >►</button>
-          <button
-            onClick={() => onTimeChange(new Date(time.getTime() + stepMs * 10))}
-            className="flex-1 bg-gray-700 hover:bg-gray-600 rounded py-1 text-xs"
-            disabled={mode === 'local'}
-          >►►</button>
+          <button onClick={() => onTimeChange(new Date(time.getTime() - stepMs * 10))}
+            className={btnCls} disabled={mode === 'local'}><IconBack2 /></button>
+          <button onClick={() => onTimeChange(new Date(time.getTime() - stepMs))}
+            className={btnCls} disabled={mode === 'local'}><IconBack1 /></button>
+          <button onClick={() => onTimeChange(new Date())}
+            className="flex-1 bg-gray-700 hover:bg-gray-600 rounded py-1 text-xs">现在</button>
+          <button onClick={() => onTimeChange(new Date(time.getTime() + stepMs))}
+            className={btnCls} disabled={mode === 'local'}><IconFwd1 /></button>
+          <button onClick={() => onTimeChange(new Date(time.getTime() + stepMs * 10))}
+            className={btnCls} disabled={mode === 'local'}><IconFwd2 /></button>
         </div>
         <div className="flex gap-1 mt-1">
           {TIME_STEPS.map((s, i) => (

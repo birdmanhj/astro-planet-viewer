@@ -99,15 +99,12 @@ export default function SolarSystemView({ planets, sun, moon, selectedBody, onSe
 
     // 行星和轨道
     PLANETS.forEach(config => {
-      // 轨道线（圆形近似）
-      const orbitPoints = [];
-      for (let i = 0; i <= 128; i++) {
-        const angle = (i / 128) * Math.PI * 2;
-        // 使用平均轨道半径近似
-        const avgAU = getAvgOrbitAU(config.id);
-        const r = auToScene(avgAU);
-        orbitPoints.push(new THREE.Vector3(r * Math.cos(angle), 0, -r * Math.sin(angle)));
-      }
+      // 椭圆轨道线：使用极坐标方程 r(θ) = a(1-e²)/(1+e·cosθ)，再经 auToScene 对数缩放
+      const orbitPoints = buildEllipticalOrbit(
+        config.semiMajorAU,
+        config.eccentricity,
+        config.perihelionLonDeg
+      );
       const orbitGeo = new THREE.BufferGeometry().setFromPoints(orbitPoints);
       const orbitMat = new THREE.LineBasicMaterial({
         color: config.orbitColor, transparent: true, opacity: 0.4
@@ -191,7 +188,8 @@ export default function SolarSystemView({ planets, sun, moon, selectedBody, onSe
     planets.forEach(planet => {
       const mesh = planetMeshesRef.current[planet.id];
       if (!mesh) return;
-      const pos = eclipticToVector3(planet.helioLon, planet.helioLat, planet.helioDistAU);
+      // 太阳系俯视图：将行星投影到黄道面（helioLat=0），使其始终落在轨道线上
+      const pos = eclipticToVector3(planet.helioLon, 0, planet.helioDistAU);
       mesh.position.copy(pos);
     });
   }, [planets]);
@@ -274,11 +272,25 @@ function createLabel(text) {
   return sprite;
 }
 
-// 各行星平均轨道半径（AU）
-const AVG_ORBIT_AU = {
-  Mercury: 0.387, Venus: 0.723, Earth: 1.000, Mars: 1.524,
-  Jupiter: 5.203, Saturn: 9.537, Uranus: 19.19, Neptune: 30.07,
-};
-function getAvgOrbitAU(id) {
-  return AVG_ORBIT_AU[id] || 1;
+/**
+ * 生成椭圆轨道点集（极坐标方程 + auToScene 对数缩放）
+ * r(θ) = a(1-e²) / (1 + e·cos(θ))
+ * θ 为真近点角，lon = perihelionLon + θ 为黄经
+ */
+function buildEllipticalOrbit(semiMajorAU, eccentricity, perihelionLonDeg, segments = 256) {
+  const omega = perihelionLonDeg * Math.PI / 180;
+  const p = semiMajorAU * (1 - eccentricity * eccentricity); // 半通径
+  const points = [];
+  for (let i = 0; i <= segments; i++) {
+    const trueAnomaly = (i / segments) * Math.PI * 2;
+    const r = p / (1 + eccentricity * Math.cos(trueAnomaly));
+    const lon = omega + trueAnomaly;
+    const sceneR = auToScene(r);
+    points.push(new THREE.Vector3(
+      sceneR * Math.cos(lon),
+      0,
+      -sceneR * Math.sin(lon)
+    ));
+  }
+  return points;
 }

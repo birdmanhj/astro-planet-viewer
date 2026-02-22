@@ -1,4 +1,6 @@
 // 行星配置：颜色、大小、名称、轨道颜色
+// 轨道根数来源：J2000.0 平均轨道要素
+// semiMajorAU: 半长轴(AU), eccentricity: 离心率, perihelionLonDeg: 近日点黄经(度)
 export const PLANETS = [
   {
     id: 'Mercury',
@@ -8,6 +10,9 @@ export const PLANETS = [
     radius: 1.2,
     orbitColor: 0x666666,
     orbitalPeriodDays: 87.97,
+    semiMajorAU: 0.38710,
+    eccentricity: 0.20563,
+    perihelionLonDeg: 77.46,
   },
   {
     id: 'Venus',
@@ -17,6 +22,9 @@ export const PLANETS = [
     radius: 1.8,
     orbitColor: 0x665500,
     orbitalPeriodDays: 224.70,
+    semiMajorAU: 0.72333,
+    eccentricity: 0.00677,
+    perihelionLonDeg: 131.53,
   },
   {
     id: 'Earth',
@@ -26,6 +34,9 @@ export const PLANETS = [
     radius: 2.0,
     orbitColor: 0x224466,
     orbitalPeriodDays: 365.25,
+    semiMajorAU: 1.00000,
+    eccentricity: 0.01671,
+    perihelionLonDeg: 102.94,
   },
   {
     id: 'Mars',
@@ -35,6 +46,9 @@ export const PLANETS = [
     radius: 1.5,
     orbitColor: 0x551100,
     orbitalPeriodDays: 686.97,
+    semiMajorAU: 1.52366,
+    eccentricity: 0.09341,
+    perihelionLonDeg: 336.04,
   },
   {
     id: 'Jupiter',
@@ -44,6 +58,9 @@ export const PLANETS = [
     radius: 5.0,
     orbitColor: 0x553300,
     orbitalPeriodDays: 4332.59,
+    semiMajorAU: 5.20336,
+    eccentricity: 0.04839,
+    perihelionLonDeg: 14.75,
   },
   {
     id: 'Saturn',
@@ -54,6 +71,9 @@ export const PLANETS = [
     orbitColor: 0x554422,
     orbitalPeriodDays: 10759.22,
     hasRings: true,
+    semiMajorAU: 9.53707,
+    eccentricity: 0.05415,
+    perihelionLonDeg: 92.43,
   },
   {
     id: 'Uranus',
@@ -63,6 +83,9 @@ export const PLANETS = [
     radius: 3.0,
     orbitColor: 0x224444,
     orbitalPeriodDays: 30688.5,
+    semiMajorAU: 19.1913,
+    eccentricity: 0.04717,
+    perihelionLonDeg: 170.96,
   },
   {
     id: 'Neptune',
@@ -72,6 +95,9 @@ export const PLANETS = [
     radius: 2.8,
     orbitColor: 0x112244,
     orbitalPeriodDays: 60182.0,
+    semiMajorAU: 30.0690,
+    eccentricity: 0.00859,
+    perihelionLonDeg: 44.97,
   },
 ];
 
