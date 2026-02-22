@@ -85,11 +85,11 @@ export default function SkyView({ planets, sun, moon, location, time, onSelectBo
 
     // 黄道线（动态，随时间/位置更新，在下方 effect 中绘制）
 
-    // 行星精灵
+    // 行星精灵（排除地球——观测者本身不出现在天空中）
     const allBodies = [
       { id: 'Sun', nameZh: '太阳', color: 0xFDB813 },
       { id: 'Moon', nameZh: '月球', color: 0xDDDDCC },
-      ...PLANETS.map(p => ({ id: p.id, nameZh: p.nameZh, color: p.color })),
+      ...PLANETS.filter(p => p.id !== 'Earth').map(p => ({ id: p.id, nameZh: p.nameZh, color: p.color })),
     ];
     allBodies.forEach(body => {
       const sprite = createPlanetSprite(body.nameZh, body.color);
@@ -243,9 +243,9 @@ export default function SkyView({ planets, sun, moon, location, time, onSelectBo
     }
   }, [location?.latitude, location?.longitude, time?.getTime(), sceneReady]);
 
-  // 更新行星位置
+  // 更新行星位置（排除地球）
   useEffect(() => {
-    const allBodies = [...(planets || []), ...(sun ? [sun] : []), ...(moon ? [moon] : [])];
+    const allBodies = [...(planets || []).filter(p => p.id !== 'Earth'), ...(sun ? [sun] : []), ...(moon ? [moon] : [])];
     allBodies.forEach(body => {
       const sprite = planetSpritesRef.current[body.id];
       if (!sprite) return;
