@@ -78,8 +78,7 @@ export default function SkyView({ planets, sun, moon, location, time, selectedBo
       scene.add(sprite);
     });
 
-    // 黄道线
-    addEclipticLine(scene);
+    // 黄道线（动态，随时间/位置更新，在下方 effect 中绘制）
 
     // 行星精灵
     const allBodies = [
@@ -180,16 +179,20 @@ export default function SkyView({ planets, sun, moon, location, time, selectedBo
       .then(stars => {
         starDataRef.current = stars;
         updateStarField(sceneRef.current, stars, location, time);
+        updateEclipticLine(sceneRef.current, location, time);
+        updateCelestialGrid(sceneRef.current, location, time);
       })
       .catch(() => {
         renderFallbackStars(sceneRef.current);
       });
   }, [sceneReady]);
 
-  // 位置或时间变化时更新星场
+  // 位置或时间变化时更新星场 + 黄道线 + 天球经纬线
   useEffect(() => {
     if (!sceneReady || !starDataRef.current) return;
     updateStarField(sceneRef.current, starDataRef.current, location, time);
+    updateEclipticLine(sceneRef.current, location, time);
+    updateCelestialGrid(sceneRef.current, location, time);
   }, [location?.latitude, location?.longitude, time?.getTime(), sceneReady]);
 
   // 更新行星位置
@@ -276,20 +279,153 @@ function renderFallbackStars(scene) {
   scene.add(points);
 }
 
-function addEclipticLine(scene) {
-  const points = [];
-  const obliquity = 23.44 * Math.PI / 180;
-  for (let i = 0; i <= 128; i++) {
-    const lon = (i / 128) * Math.PI * 2;
-    const ra = Math.atan2(Math.sin(lon) * Math.cos(obliquity), Math.cos(lon));
-    const dec = Math.asin(Math.sin(lon) * Math.sin(obliquity));
-    const r = 990;
-    points.push(new THREE.Vector3(r * Math.cos(dec) * Math.cos(ra), r * Math.sin(dec), -r * Math.cos(dec) * Math.sin(ra)));
+/**
+ * 天球赤道坐标网格（赤纬圈 + 赤经线），随时间/位置动态更新
+ */
+function updateCelestialGrid(scene, location, time) {
+  if (!scene) return;
+  const old = scene.getObjectByName('celestialGrid');
+  if (old) {
+    old.traverse(c => { c.geometry?.dispose(); c.material?.dispose(); });
+    scene.remove(old);
   }
-  scene.add(new THREE.LineLoop(
-    new THREE.BufferGeometry().setFromPoints(points),
-    new THREE.LineBasicMaterial({ color: 0x553300, transparent: true, opacity: 0.4 })
-  ));
+
+  const lst = getLocalSiderealTime(time || new Date(), location?.longitude || 116.4);
+  const lat = location?.latitude || 39.9;
+  const R = 970;
+  const group = new THREE.Group();
+  group.name = 'celestialGrid';
+
+  const gridMat = new THREE.LineBasicMaterial({ color: 0x1a3a5a, transparent: true, opacity: 0.5 });
+  const equatorMat = new THREE.LineBasicMaterial({ color: 0x2255aa, transparent: true, opacity: 0.7 });
+
+  // 赤纬圈：-60°, -30°, 0°(天赤道), +30°, +60°
+  const decLines = [-60, -30, 0, 30, 60];
+  decLines.forEach(decDeg => {
+    const pts = [];
+    for (let i = 0; i <= 72; i++) {
+      const raDeg = (i / 72) * 360;
+      const { altitude, azimuth } = raDecToAltAz(raDeg, decDeg, lat, lst);
+      if (altitude > -5) pts.push(altAzToVector3(altitude, azimuth, R));
+      else if (pts.length > 0) pts.push(null);
+    }
+    const mat = decDeg === 0 ? equatorMat : gridMat;
+    let seg = [];
+    const flush = () => {
+      if (seg.length >= 2) group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(seg), mat));
+      seg = [];
+    };
+    pts.forEach(p => p === null ? flush() : seg.push(p));
+    flush();
+
+    // 天赤道标签
+    if (decDeg === 0) {
+      let maxAlt = -Infinity, labelPos = null;
+      for (let i = 0; i <= 72; i++) {
+        const raDeg = (i / 72) * 360;
+        const { altitude, azimuth } = raDecToAltAz(raDeg, 0, lat, lst);
+        if (altitude > maxAlt) { maxAlt = altitude; labelPos = { altitude, azimuth }; }
+      }
+      if (labelPos && maxAlt > 5) {
+        const sp = createTextSprite('天赤道', '#4477cc', 18);
+        sp.position.copy(altAzToVector3(labelPos.altitude + 3, labelPos.azimuth, R));
+        sp.scale.set(55, 22, 1);
+        group.add(sp);
+      }
+    }
+  });
+
+  // 赤经线：每 2h（0h, 2h, 4h, ..., 22h）
+  for (let h = 0; h < 24; h += 2) {
+    const raDeg = h * 15;
+    const pts = [];
+    for (let i = 0; i <= 36; i++) {
+      const decDeg = -90 + (i / 36) * 180;
+      const { altitude, azimuth } = raDecToAltAz(raDeg, decDeg, lat, lst);
+      if (altitude > -5) pts.push(altAzToVector3(altitude, azimuth, R));
+      else if (pts.length > 0) pts.push(null);
+    }
+    let seg = [];
+    const flush = () => {
+      if (seg.length >= 2) group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(seg), gridMat));
+      seg = [];
+    };
+    pts.forEach(p => p === null ? flush() : seg.push(p));
+    flush();
+  }
+
+  scene.add(group);
+}
+
+/**
+ * 动态黄道线：将黄道坐标转换为 RA/Dec，再转为 Alt/Az，与星星坐标系一致
+ * 每次时间/位置变化时重绘
+ */
+function updateEclipticLine(scene, location, time) {
+  if (!scene) return;
+  // 移除旧的黄道线
+  const old = scene.getObjectByName('eclipticLine');
+  if (old) { scene.remove(old); old.geometry?.dispose(); old.material?.dispose(); }
+  const oldLabel = scene.getObjectByName('eclipticLabel');
+  if (oldLabel) { scene.remove(oldLabel); oldLabel.material?.map?.dispose(); oldLabel.material?.dispose(); }
+
+  const lst = getLocalSiderealTime(time || new Date(), location?.longitude || 116.4);
+  const lat = location?.latitude || 39.9;
+  const obliquity = 23.44 * Math.PI / 180;
+  const R = 980;
+  const points = [];
+
+  for (let i = 0; i <= 180; i++) {
+    const lon = (i / 180) * Math.PI * 2;
+    const raDeg = Math.atan2(Math.sin(lon) * Math.cos(obliquity), Math.cos(lon)) * 180 / Math.PI;
+    const decDeg = Math.asin(Math.sin(lon) * Math.sin(obliquity)) * 180 / Math.PI;
+    const { altitude, azimuth } = raDecToAltAz(raDeg, decDeg, lat, lst);
+    // 只画地平线以上的部分（稍微延伸到地平线以下一点）
+    if (altitude > -10) {
+      points.push(altAzToVector3(altitude, azimuth, R));
+    } else if (points.length > 0) {
+      // 断开线段（不连接地平线以下的部分）
+      points.push(null);
+    }
+  }
+
+  // 按 null 分段，分别创建 LineSegments
+  let seg = [];
+  const group = new THREE.Group();
+  group.name = 'eclipticLine';
+  const mat = new THREE.LineBasicMaterial({ color: 0x886622, transparent: true, opacity: 0.7 });
+
+  const flush = () => {
+    if (seg.length >= 2) {
+      const geo = new THREE.BufferGeometry().setFromPoints(seg);
+      group.add(new THREE.Line(geo, mat));
+    }
+    seg = [];
+  };
+
+  points.forEach(p => {
+    if (p === null) flush();
+    else seg.push(p);
+  });
+  flush();
+  scene.add(group);
+
+  // 黄道标签（在黄道最高点附近）
+  let maxAlt = -Infinity, labelPos = null;
+  for (let i = 0; i <= 180; i++) {
+    const lon = (i / 180) * Math.PI * 2;
+    const raDeg = Math.atan2(Math.sin(lon) * Math.cos(obliquity), Math.cos(lon)) * 180 / Math.PI;
+    const decDeg = Math.asin(Math.sin(lon) * Math.sin(obliquity)) * 180 / Math.PI;
+    const { altitude, azimuth } = raDecToAltAz(raDeg, decDeg, lat, lst);
+    if (altitude > maxAlt) { maxAlt = altitude; labelPos = { altitude, azimuth }; }
+  }
+  if (labelPos && maxAlt > 5) {
+    const sprite = createTextSprite('黄道', '#aa7733', 20);
+    sprite.position.copy(altAzToVector3(labelPos.altitude + 3, labelPos.azimuth, R));
+    sprite.scale.set(50, 25, 1);
+    sprite.name = 'eclipticLabel';
+    scene.add(sprite);
+  }
 }
 
 function createPlanetSprite(nameZh, color) {
