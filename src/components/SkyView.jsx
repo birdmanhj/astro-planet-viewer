@@ -12,7 +12,7 @@ const COMPASS = [
   { label: '南', az: 180 }, { label: '西', az: 270 },
 ];
 
-export default function SkyView({ planets, sun, moon, location, time, selectedBody, onSelectBody }) {
+export default function SkyView({ planets, sun, moon, location, time, onSelectBody }) {
   const mountRef = useRef(null);
   const sceneRef = useRef(null);
   const rendererRef = useRef(null);
@@ -23,7 +23,12 @@ export default function SkyView({ planets, sun, moon, location, time, selectedBo
   const lastMouseRef = useRef({ x: 0, y: 0 });
   const sphericalRef = useRef({ theta: 0, phi: Math.PI / 2 });
   const starDataRef = useRef(null); // 缓存星表数据
+  const constellDataRef = useRef(null); // 缓存星座数据
+  const hoveredConstellRef = useRef(null); // 当前悬停星座 id
+  const locationRef = useRef(null); // 供事件处理器访问最新 location
+  const timeRef = useRef(null);     // 供事件处理器访问最新 time
   const [sceneReady, setSceneReady] = useState(false);
+  const [hoveredConstell, setHoveredConstell] = useState(null); // { nameZh, nameEn }
 
   // 初始化场景
   useEffect(() => {
@@ -97,9 +102,41 @@ export default function SkyView({ planets, sun, moon, location, time, selectedBo
     // 鼠标控制
     const onMouseDown = (e) => { isDraggingRef.current = true; lastMouseRef.current = { x: e.clientX, y: e.clientY }; };
     const onMouseMove = (e) => {
-      if (!isDraggingRef.current) return;
-      rotateSky(e.clientX - lastMouseRef.current.x, e.clientY - lastMouseRef.current.y, 0.003);
-      lastMouseRef.current = { x: e.clientX, y: e.clientY };
+      if (isDraggingRef.current) {
+        rotateSky(e.clientX - lastMouseRef.current.x, e.clientY - lastMouseRef.current.y, 0.003);
+        lastMouseRef.current = { x: e.clientX, y: e.clientY };
+        return;
+      }
+      // 星座悬停检测
+      if (!constellDataRef.current?.length) return;
+      const rect = mount.getBoundingClientRect();
+      const mx = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      const my = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera(new THREE.Vector2(mx, my), cameraRef.current);
+      const dir = raycaster.ray.direction.clone().normalize();
+
+      const loc = locationRef.current;
+      const t = timeRef.current;
+      const lst = getLocalSiderealTime(t || new Date(), loc?.longitude || 116.4);
+      const lat = loc?.latitude || 39.9;
+
+      let nearest = null, minAngle = Infinity;
+      constellDataRef.current.forEach(c => {
+        const { altitude, azimuth } = raDecToAltAz(c.center.ra, c.center.dec, lat, lst);
+        if (altitude < -15) return;
+        const pos = altAzToVector3(altitude, azimuth, 1).normalize();
+        const angle = Math.acos(Math.max(-1, Math.min(1, dir.dot(pos))));
+        if (angle < minAngle) { minAngle = angle; nearest = c; }
+      });
+
+      const THRESHOLD = 28 * Math.PI / 180;
+      const newId = minAngle < THRESHOLD ? nearest?.id : null;
+      if (newId !== hoveredConstellRef.current) {
+        hoveredConstellRef.current = newId;
+        updateConstellationLines(sceneRef.current, constellDataRef.current, loc, t, newId);
+        setHoveredConstell(newId ? nearest : null);
+      }
     };
     const onMouseUp = () => { isDraggingRef.current = false; };
 
@@ -166,33 +203,44 @@ export default function SkyView({ planets, sun, moon, location, time, selectedBo
     };
   }, []);
 
-  // 加载星表数据（只加载一次）
+  // 保持 locationRef / timeRef 最新，供事件处理器使用
+  useEffect(() => { locationRef.current = location; }, [location]);
+  useEffect(() => { timeRef.current = time; }, [time]);
+
+  // 加载星表 + 星座数据（只加载一次）
   useEffect(() => {
     if (!sceneReady) return;
     if (starDataRef.current) {
-      // 已有缓存，直接渲染
       updateStarField(sceneRef.current, starDataRef.current, location, time);
+      if (constellDataRef.current) {
+        updateConstellationLines(sceneRef.current, constellDataRef.current, location, time, null);
+      }
       return;
     }
-    fetch('/data/stars_bright.json')
-      .then(r => r.json())
-      .then(stars => {
-        starDataRef.current = stars;
-        updateStarField(sceneRef.current, stars, location, time);
-        updateEclipticLine(sceneRef.current, location, time);
-        updateCelestialGrid(sceneRef.current, location, time);
-      })
-      .catch(() => {
-        renderFallbackStars(sceneRef.current);
-      });
+    Promise.all([
+      fetch('/data/stars_bright.json').then(r => r.json()),
+      fetch('/data/constellations.json').then(r => r.json()),
+    ]).then(([stars, constells]) => {
+      starDataRef.current = stars;
+      constellDataRef.current = constells;
+      updateStarField(sceneRef.current, stars, location, time);
+      updateEclipticLine(sceneRef.current, location, time);
+      updateCelestialGrid(sceneRef.current, location, time);
+      updateConstellationLines(sceneRef.current, constells, location, time, null);
+    }).catch(() => {
+      renderFallbackStars(sceneRef.current);
+    });
   }, [sceneReady]);
 
-  // 位置或时间变化时更新星场 + 黄道线 + 天球经纬线
+  // 位置或时间变化时更新星场 + 黄道线 + 天球经纬线 + 星座连线
   useEffect(() => {
     if (!sceneReady || !starDataRef.current) return;
     updateStarField(sceneRef.current, starDataRef.current, location, time);
     updateEclipticLine(sceneRef.current, location, time);
     updateCelestialGrid(sceneRef.current, location, time);
+    if (constellDataRef.current) {
+      updateConstellationLines(sceneRef.current, constellDataRef.current, location, time, hoveredConstellRef.current);
+    }
   }, [location?.latitude, location?.longitude, time?.getTime(), sceneReady]);
 
   // 更新行星位置
@@ -218,6 +266,11 @@ export default function SkyView({ planets, sun, moon, location, time, selectedBo
 
   return (
     <div ref={mountRef} className="w-full h-full relative" style={{ background: '#000005' }}>
+      {hoveredConstell && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-black/60 border border-blue-800/60 rounded px-3 py-1.5 text-sm text-blue-200 pointer-events-none select-none backdrop-blur">
+          {hoveredConstell.nameZh} · {hoveredConstell.nameEn}
+        </div>
+      )}
       <div className="absolute bottom-4 left-1/2 -translate-x-1/2 text-xs text-gray-500 pointer-events-none select-none">
         拖拽旋转视角 · 双指缩放
       </div>
@@ -277,6 +330,55 @@ function renderFallbackStars(scene) {
   const points = new THREE.Points(geo, new THREE.PointsMaterial({ color: 0xffffff, size: 1.5, sizeAttenuation: false }));
   points.name = 'starField';
   scene.add(points);
+}
+
+/**
+ * 星座连线：平时暗色显示，鼠标悬停时高亮并显示名称
+ */
+function updateConstellationLines(scene, constellData, location, time, hoveredId) {
+  if (!scene || !constellData?.length) return;
+  const old = scene.getObjectByName('constellLines');
+  if (old) { old.traverse(c => { c.geometry?.dispose(); c.material?.dispose(); }); scene.remove(old); }
+
+  const lst = getLocalSiderealTime(time || new Date(), location?.longitude || 116.4);
+  const lat = location?.latitude || 39.9;
+  const R = 960;
+  const group = new THREE.Group();
+  group.name = 'constellLines';
+
+  constellData.forEach(c => {
+    const isHovered = c.id === hoveredId;
+    const mat = new THREE.LineBasicMaterial({
+      color: isHovered ? 0x88aaff : 0x1e3355,
+      transparent: true,
+      opacity: isHovered ? 0.95 : 0.45,
+    });
+
+    c.lines.forEach(segment => {
+      const pts = segment
+        .map(([raDeg, decDeg]) => {
+          const { altitude, azimuth } = raDecToAltAz(raDeg, decDeg, lat, lst);
+          return altitude > -5 ? altAzToVector3(altitude, azimuth, R) : null;
+        })
+        .filter(Boolean);
+      if (pts.length >= 2) {
+        group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), mat));
+      }
+    });
+
+    // 悬停时在星座中心显示名称
+    if (isHovered) {
+      const { altitude, azimuth } = raDecToAltAz(c.center.ra, c.center.dec, lat, lst);
+      if (altitude > 3) {
+        const sp = createTextSprite(`${c.nameZh}  ${c.nameEn}`, '#aabbff', 18);
+        sp.position.copy(altAzToVector3(altitude + 4, azimuth, R));
+        sp.scale.set(120, 24, 1);
+        group.add(sp);
+      }
+    }
+  });
+
+  scene.add(group);
 }
 
 /**
