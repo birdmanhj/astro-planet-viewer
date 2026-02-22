@@ -83,6 +83,20 @@ export default function SolarSystemView({ planets, sun, moon, selectedBody, onSe
     moonLabel.position.set(0, MOON_CONFIG.radius + 1.5, 0);
     moonMesh.add(moonLabel);
 
+    // 月球视觉轨道圈（作为地球的子对象，随地球移动）
+    const moonOrbitPts = [];
+    for (let i = 0; i <= 64; i++) {
+      const a = (i / 64) * Math.PI * 2;
+      moonOrbitPts.push(new THREE.Vector3(4 * Math.cos(a), 0, -4 * Math.sin(a)));
+    }
+    const moonOrbitLine = new THREE.LineLoop(
+      new THREE.BufferGeometry().setFromPoints(moonOrbitPts),
+      new THREE.LineBasicMaterial({ color: 0x445566, transparent: true, opacity: 0.5 })
+    );
+    // 先加到场景，后续在 effect 里跟随地球
+    scene.add(moonOrbitLine);
+    planetMeshesRef.current['MoonOrbit'] = moonOrbitLine;
+
     // 行星和轨道
     PLANETS.forEach(config => {
       // 轨道线（圆形近似）
@@ -182,17 +196,27 @@ export default function SolarSystemView({ planets, sun, moon, selectedBody, onSe
     });
   }, [planets]);
 
-  // 月球跟随地球，偏移 3 个场景单位以便可见
+  // 月球跟随地球，按实际地心黄道经度确定方向，加视觉偏移量
   useEffect(() => {
     if (!moon) return;
     const earthMesh = planetMeshesRef.current['Earth'];
     const moonMesh = planetMeshesRef.current['Moon'];
+    const moonOrbit = planetMeshesRef.current['MoonOrbit'];
     if (!earthMesh || !moonMesh) return;
+
+    // moon.helioLon/helioLat 是地心黄道坐标（月球相对地球的方向）
+    const lonRad = moon.helioLon * Math.PI / 180;
+    const latRad = moon.helioLat * Math.PI / 180;
+    const MOON_VIS_RADIUS = 4; // 视觉轨道半径（场景单位）
+
     moonMesh.position.set(
-      earthMesh.position.x + 3,
-      earthMesh.position.y + 1.5,
-      earthMesh.position.z
+      earthMesh.position.x + MOON_VIS_RADIUS * Math.cos(latRad) * Math.cos(lonRad),
+      earthMesh.position.y + MOON_VIS_RADIUS * Math.sin(latRad),
+      earthMesh.position.z - MOON_VIS_RADIUS * Math.cos(latRad) * Math.sin(lonRad)
     );
+
+    // 轨道圈跟随地球
+    if (moonOrbit) moonOrbit.position.copy(earthMesh.position);
   }, [moon, planets]);
 
   // 高亮选中天体（MeshBasicMaterial 用颜色变化表示选中）
