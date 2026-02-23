@@ -8,4 +8,5 @@ export default defineConfig({
     react(),
     tailwindcss(),
   ],
+  base: '/astro-planet-viewer/', // GitHub Pages 部署路径
 })
