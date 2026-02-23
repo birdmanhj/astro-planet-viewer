@@ -1,8 +1,9 @@
 # 技术设计文档 (DESIGN)
 # 天文行星位置查询展示网站
 
-**版本：** 1.0
-**日期：** 2026-02-21
+**版本：** 1.0.0
+**日期：** 2026-02-24
+**更新：** 添加坐标系统详细设计和四元数旋转实现
 
 ---
 
@@ -154,21 +155,44 @@ const helioVec = Astronomy.HelioVector('Mars', time);
 ```javascript
 // 地平坐标 → Three.js 3D坐标（天空视图）
 // 天球半径 R=1000，相机在球心
+// 坐标系：Y轴向上，X轴向东，-Z轴向南（北方向为+Z）
 altAzToVector3(altitude, azimuth, radius = 1000)
+
+// 赤道坐标 → 地平坐标（球面三角学）
+// 包含极点奇异性处理
+raDecToAltAz(raDeg, decDeg, latDeg, lstDeg)
+
+// 赤道坐标 → Three.js 3D坐标（通过 Alt/Az 中间转换）
+// 使用已验证的转换管道，确保一致性
+raDecToVector3(raDeg, decDeg, latDeg, lstDeg, radius = 1000)
+
+// 计算本地恒星时（度）
+getLocalSiderealTime(date, lngDeg)
 
 // 黄道坐标 → Three.js 3D坐标（太阳系视图）
 // 对数缩放轨道半径
-eclipticToVector3(lon, lat, distAU, logScale = true)
+eclipticToVector3(lon, lat, distAU)
 
 // AU → 场景单位（对数缩放）
-auToSceneUnits(au)  // log(au + 1) * 50
-
-// 度 → 弧度
-toRad(deg)
-
-// 弧度 → 度
-toDeg(rad)
+auToScene(au)  // log(au * 10 + 1) * 30
 ```
+
+**极点奇异性处理：**
+
+当天体接近天顶或天底时（`cos(Alt) ≈ 0`），方位角计算分母趋近于零。解决方案：
+
+```javascript
+const denom = Math.cos(altitude * DEG2RAD) * Math.cos(latRad);
+if (Math.abs(denom) < 1e-10) {
+  // 极点附近，方位角由时角决定
+  // 北天极：azimuth = 180° - HA（从南方看向北极）
+  // 南天极：azimuth = HA（从北方看向南极）
+  const azimuth = altitude > 0 ? (180 - ha + 360) % 360 : ha;
+  return { altitude, azimuth };
+}
+```
+
+这确保了所有赤经线在极点附近均匀分布，避免重叠或计算错误。
 
 ---
 
@@ -256,12 +280,14 @@ Scene
 │   └── 按星等设置点大小和透明度
 ├── ConstellationLines (LineSegments: 星座连线)
 ├── EclipticLine (Line: 黄道圆)
-├── CelestialEquator (Line: 天赤道)
+├── CelestialGrid (赤经赤纬网格)
+│   ├── DeclinationCircles (5条: -60°, -30°, 0°, +30°, +60°)
+│   └── RALines (12条 × 2段，分段绘制避免视锥体裁剪)
 ├── PlanetMarkers[9] (Sprite: 行星标记)
 │   └── 带名称标签
 ├── CompassLabels (Sprite: 东南西北标注)
 └── Camera (PerspectiveCamera, FOV=75)
-    └── 自定义触摸/鼠标控制（球面旋转）
+    └── 四元数旋转控制（轨迹球算法）
 ```
 
 **坐标转换（Alt/Az → 3D）：**
@@ -269,12 +295,56 @@ Scene
 function altAzToVector3(altDeg, azDeg, r = 1000) {
   const alt = altDeg * Math.PI / 180;
   const az = azDeg * Math.PI / 180;
-  // 注意：Three.js Y轴向上，Z轴向南
+  // 注意：Three.js Y轴向上，Z轴向北
   return new THREE.Vector3(
     r * Math.cos(alt) * Math.sin(az),   // x: 东
     r * Math.sin(alt),                   // y: 上
     -r * Math.cos(alt) * Math.cos(az)   // z: 南（负Z向南）
   );
+}
+```
+
+**赤经线分段渲染：**
+
+为避免 Three.js 视锥体裁剪问题，每条赤经线分成两段绘制：
+
+```javascript
+// 南半球段：-90° 到 0°
+for (let i = 0; i <= 18; i++) {
+  const decDeg = -90 + (i / 18) * 90;
+  ptsSouth.push(raDecToVector3(raDeg, decDeg, lat, lst, R));
+}
+
+// 北半球段：0° 到 +90°
+for (let i = 0; i <= 18; i++) {
+  const decDeg = (i / 18) * 90;
+  ptsNorth.push(raDecToVector3(raDeg, decDeg, lat, lst, R));
+}
+```
+
+这确保即使一个极点在视野外，另一段仍能正常渲染。
+
+**轨迹球旋转算法：**
+
+使用四元数实现无万向锁的平滑旋转：
+
+```javascript
+function rotateSky(dx, dy, factor) {
+  // 1. 计算旋转轴（垂直于鼠标移动方向）
+  const rotationAxis = new THREE.Vector3(dy, dx, 0).normalize();
+
+  // 2. 转换到世界空间
+  rotationAxis.applyQuaternion(orientationRef.current);
+
+  // 3. 计算旋转角度
+  const angle = Math.sqrt(dx * dx + dy * dy) * factor;
+
+  // 4. 创建旋转四元数
+  const rotationQ = new THREE.Quaternion().setFromAxisAngle(rotationAxis, angle);
+
+  // 5. 应用旋转
+  orientationRef.current.premultiply(rotationQ);
+  camera.quaternion.copy(orientationRef.current);
 }
 ```
 
@@ -287,8 +357,8 @@ const colors = new Float32Array(stars.length * 3);
 
 stars.forEach((star, i) => {
   // RA/Dec → Alt/Az（需要观测者位置和时间）
-  const { altitude, azimuth } = raDecToAltAz(star.ra, star.dec, observer, time);
-  const pos = altAzToVector3(altitude, azimuth);
+  const { altitude, azimuth } = raDecToAltAz(star.ra * 15, star.dec, lat, lst);
+  const pos = altAzToVector3(altitude, azimuth, 1000);
   positions[i*3] = pos.x; positions[i*3+1] = pos.y; positions[i*3+2] = pos.z;
 
   // 星等 → 大小（mag 1 = 大，mag 6 = 小）
@@ -449,8 +519,10 @@ function onTouchMove(e) {
    - 使用 `BufferGeometry` 而非 `Geometry`
    - 星点使用 `THREE.Points`（单次draw call）
    - 轨道线使用 `LineSegments`
+   - 赤经线分段渲染，优化视锥体裁剪
 4. **计算缓存**：恒星 Alt/Az 坐标每分钟更新一次（非实时）
-5. **Web Worker**（可选）：将天文计算移至 Worker 线程
+5. **四元数旋转**：使用轨迹球算法，避免万向锁，提供平滑旋转体验
+6. **Web Worker**（可选）：将天文计算移至 Worker 线程
 
 ---
 
