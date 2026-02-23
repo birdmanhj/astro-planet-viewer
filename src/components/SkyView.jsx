@@ -79,7 +79,6 @@ export default function SkyView({ planets, sun, moon, location, time, onSelectBo
       const pos = altAzToVector3(0, az, 900);
       const sprite = createTextSprite(label, '#44aa44', 28);
       sprite.position.copy(pos);
-      sprite.scale.set(40, 20, 1);
       scene.add(sprite);
     });
 
@@ -372,7 +371,6 @@ function updateConstellationLines(scene, constellData, location, time, hoveredId
       if (altitude > 3) {
         const sp = createTextSprite(`${c.nameZh}  ${c.nameEn}`, '#aabbff', 18);
         sp.position.copy(altAzToVector3(altitude + 4, azimuth, R));
-        sp.scale.set(120, 24, 1);
         group.add(sp);
       }
     }
@@ -431,7 +429,6 @@ function updateCelestialGrid(scene, location, time) {
       if (labelPos && maxAlt > 5) {
         const sp = createTextSprite('天赤道', '#4477cc', 18);
         sp.position.copy(altAzToVector3(labelPos.altitude + 3, labelPos.azimuth, R));
-        sp.scale.set(55, 22, 1);
         group.add(sp);
       }
     }
@@ -524,7 +521,6 @@ function updateEclipticLine(scene, location, time) {
   if (labelPos && maxAlt > 5) {
     const sprite = createTextSprite('黄道', '#aa7733', 20);
     sprite.position.copy(altAzToVector3(labelPos.altitude + 3, labelPos.azimuth, R));
-    sprite.scale.set(50, 25, 1);
     sprite.name = 'eclipticLabel';
     scene.add(sprite);
   }
@@ -554,13 +550,24 @@ function createPlanetSprite(nameZh, color) {
 }
 
 function createTextSprite(text, color, fontSize) {
+  // Measure text width first, then size canvas dynamically
+  const offscreen = document.createElement('canvas');
+  const offCtx = offscreen.getContext('2d');
+  offCtx.font = `bold ${fontSize}px sans-serif`;
+  const textWidth = offCtx.measureText(text).width;
+
   const canvas = document.createElement('canvas');
-  canvas.width = 64; canvas.height = 32;
+  canvas.width = Math.ceil(textWidth) + 24;
+  canvas.height = Math.ceil(fontSize * 2);
   const ctx = canvas.getContext('2d');
   ctx.font = `bold ${fontSize}px sans-serif`;
   ctx.fillStyle = color;
   ctx.textAlign = 'center';
-  ctx.fillText(text, 32, 24);
+  ctx.fillText(text, canvas.width / 2, fontSize * 1.4);
+
   const tex = new THREE.CanvasTexture(canvas);
-  return new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false }));
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false }));
+  // Keep aspect ratio; fix height at 24 world units
+  sprite.scale.set((canvas.width / canvas.height) * 24, 24, 1);
+  return sprite;
 }
