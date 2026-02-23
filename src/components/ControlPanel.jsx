@@ -1,4 +1,5 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
+import { lookupCity, reverseGeocode } from '../utils/cityDb';
 
 // SVG 图标：尺寸完全一致，不依赖字体渲染
 const IconBack2 = () => (
@@ -31,7 +32,7 @@ const TIME_STEPS = [
 // 分段日期时间输入组件
 // 上下键：增减当前段；左右键：切换焦点段
 function DateTimeInput({ value, onChange, disabled }) {
-  const segRefs = useRef([null, null, null, null, null]);
+  const segRefs = useRef([null, null, null, null, null, null]);
 
   const d = value instanceof Date ? value : new Date();
   const segments = [
@@ -40,6 +41,7 @@ function DateTimeInput({ value, onChange, disabled }) {
     { key: 'day',    val: d.getDate(),        min: 1,  max: 31,   pad: 2 },
     { key: 'hour',   val: d.getHours(),       min: 0,  max: 23,   pad: 2 },
     { key: 'minute', val: d.getMinutes(),     min: 0,  max: 59,   pad: 2 },
+    { key: 'second', val: d.getSeconds(),     min: 0,  max: 59,   pad: 2 },
   ];
 
   const applyChange = (idx, newVal) => {
@@ -49,6 +51,7 @@ function DateTimeInput({ value, onChange, disabled }) {
     else if (idx === 2) nd.setDate(newVal);
     else if (idx === 3) nd.setHours(newVal);
     else if (idx === 4) nd.setMinutes(newVal);
+    else if (idx === 5) nd.setSeconds(newVal);
     onChange(nd);
   };
 
@@ -63,14 +66,14 @@ function DateTimeInput({ value, onChange, disabled }) {
       applyChange(idx, seg.val <= seg.min ? seg.max : seg.val - 1);
     } else if (e.key === 'ArrowRight') {
       e.preventDefault();
-      if (idx < 4) segRefs.current[idx + 1]?.focus();
+      if (idx < 5) segRefs.current[idx + 1]?.focus();
     } else if (e.key === 'ArrowLeft') {
       e.preventDefault();
       if (idx > 0) segRefs.current[idx - 1]?.focus();
     }
   };
 
-  const SEP = ['−', '−', ' ', ':'];
+  const SEP = ['−', '−', ' ', ':', ':'];
 
   return (
     <div
@@ -86,8 +89,8 @@ function DateTimeInput({ value, onChange, disabled }) {
           >
             {String(seg.val).padStart(seg.pad, '0')}
           </span>
-          {idx < 4 && (
-            <span className="text-gray-500 select-none px-px">{SEP[idx]}</span>
+          {idx < 5 && (
+            <span className={`text-gray-500 select-none ${idx === 2 ? 'px-2' : 'px-px'}`}>{SEP[idx]}</span>
           )}
         </span>
       ))}
@@ -103,13 +106,61 @@ export default function ControlPanel({
   phenomena,
   locationStatus, onRequestLocation,
   isMobile, isOpen, onToggle,
+  renderMode, onRenderModeChange, // 新增：渲染模式
 }) {
   const [step, setStep] = useState(1);
-  const [customLat, setCustomLat] = useState('');
-  const [customLng, setCustomLng] = useState('');
-  const [showLocationInput, setShowLocationInput] = useState(false);
+  const [cityInput, setCityInput] = useState('');
+  const [coordLat, setCoordLat] = useState('');
+  const [coordLng, setCoordLng] = useState('');
+  const [locationMsg, setLocationMsg] = useState(null); // { text, ok }
 
+  const handleCityBlur = async () => {
+    const name = cityInput.trim();
+    if (!name) return;
+    const result = await lookupCity(name);
+    if (result) {
+      onLocationChange({ latitude: result.lat, longitude: result.lng, elevation: 50, name: result.displayName });
+      setLocationMsg({ text: `观测位置已修改至 ${result.displayName}`, ok: true });
+    } else {
+      setLocationMsg({ text: `"${name}" 位置名称未检测到，请修改再试`, ok: false });
+    }
+  };
+
+  const handleCoordSubmit = async () => {
+    const lat = parseFloat(coordLat);
+    const lng = parseFloat(coordLng);
+    if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      setLocationMsg({ text: '经纬度格式错误（纬度 ±90，经度 ±180）', ok: false });
+      return;
+    }
+    const fallback = `${Math.abs(lat).toFixed(4)}°${lat >= 0 ? 'N' : 'S'}, ${Math.abs(lng).toFixed(4)}°${lng >= 0 ? 'E' : 'W'}`;
+    onLocationChange({ latitude: lat, longitude: lng, elevation: 50, name: fallback });
+    setLocationMsg({ text: `观测位置已修改至 ${fallback}`, ok: true });
+    const name = await reverseGeocode(lat, lng);
+    if (name) {
+      onLocationChange({ latitude: lat, longitude: lng, elevation: 50, name });
+      setLocationMsg({ text: `观测位置已修改至 ${name}`, ok: true });
+    }
+  };
+
+  // Hold-to-repeat: keep a ref to latest time so repeated actions use updated value
   const stepMs = TIME_STEPS[step].ms;
+  const timeRef = useRef(time);
+  useEffect(() => { timeRef.current = time; }, [time]);
+  const holdTimerRef = useRef(null);
+  const holdIntervalRef = useRef(null);
+  function startHold(deltaMs) {
+    if (mode === 'local') return;
+    const act = () => onTimeChange(new Date(timeRef.current.getTime() + deltaMs));
+    act();
+    holdTimerRef.current = setTimeout(() => {
+      holdIntervalRef.current = setInterval(act, 120);
+    }, 500);
+  }
+  function stopHold() {
+    clearTimeout(holdTimerRef.current);
+    clearInterval(holdIntervalRef.current);
+  }
 
   const formatTime = (d) => {
     const pad = n => String(n).padStart(2, '0');
@@ -139,7 +190,7 @@ export default function ControlPanel({
               mode === 'local' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
             }`}
           >
-            本地模式
+            实时模式
           </button>
           <button
             onClick={() => onModeChange('custom')}
@@ -152,49 +203,94 @@ export default function ControlPanel({
         </div>
       </div>
 
+      {/* 渲染模式 */}
+      <div>
+        <div className="text-xs text-gray-400 mb-1">渲染模式</div>
+        <div className="flex gap-2">
+          <button
+            onClick={() => onRenderModeChange('solid')}
+            className={`flex-1 py-1.5 rounded text-xs font-medium transition-colors ${
+              renderMode === 'solid' ? 'bg-purple-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+            }`}
+          >
+            纯色模式
+          </button>
+          <button
+            onClick={() => onRenderModeChange('texture')}
+            className={`flex-1 py-1.5 rounded text-xs font-medium transition-colors ${
+              renderMode === 'texture' ? 'bg-purple-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+            }`}
+          >
+            真实模式
+          </button>
+        </div>
+      </div>
+
       {/* 观测位置 */}
       <div>
         <div className="text-xs text-gray-400 mb-1">观测位置</div>
-        <div className="flex items-center gap-2 bg-gray-800 rounded px-2 py-1.5">
-          <span className="text-blue-400">📍</span>
-          <span className="flex-1 truncate text-xs">{location?.name || '未知位置'}</span>
-          {mode === 'local' ? (
-            <button
-              onClick={onRequestLocation}
-              className="text-xs text-blue-400 hover:text-blue-300 whitespace-nowrap"
-            >
-              {locationStatus === 'loading' ? '定位中...' : '重新定位'}
-            </button>
-          ) : (
-            <button
-              onClick={() => setShowLocationInput(!showLocationInput)}
-              className="text-xs text-blue-400 hover:text-blue-300"
-            >
-              更改
-            </button>
+        <div className="bg-gray-800 rounded px-2 py-1.5">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-blue-400">📍</span>
+            {mode === 'local' && (
+              <button
+                onClick={onRequestLocation}
+                className="text-xs text-blue-400 hover:text-blue-300 whitespace-nowrap"
+              >
+                {locationStatus === 'loading' ? '定位中...' : '重新定位'}
+              </button>
+            )}
+          </div>
+          <div className="text-xs text-gray-200 mt-0.5 leading-relaxed break-words">
+            {location?.name || '未知位置'}
+          </div>
+          {location?.latitude != null && (
+            <div className="text-xs text-gray-500 mt-0.5 font-mono">
+              {Math.abs(location.latitude).toFixed(4)}°{location.latitude >= 0 ? 'N' : 'S'}
+              {'  '}
+              {Math.abs(location.longitude).toFixed(4)}°{location.longitude >= 0 ? 'E' : 'W'}
+            </div>
           )}
         </div>
         {locationStatus === 'denied' && (
           <div className="text-xs text-yellow-400 mt-1">定位被拒绝，请手动输入位置</div>
         )}
-        {showLocationInput && mode === 'custom' && (
-          <div className="mt-2 flex flex-col gap-1">
+        {mode === 'custom' && (
+          <div className="mt-2 flex flex-col gap-1.5">
             <input
-              type="number" placeholder="纬度 (如 39.9)"
-              value={customLat} onChange={e => setCustomLat(e.target.value)}
-              className="bg-gray-700 rounded px-2 py-1 text-xs text-white outline-none"
+              type="text"
+              placeholder="城市名称，如：上海、Tokyo…"
+              value={cityInput}
+              onChange={e => { setCityInput(e.target.value); setLocationMsg(null); }}
+              onBlur={handleCityBlur}
+              onKeyDown={e => e.key === 'Enter' && e.target.blur()}
+              className="w-full bg-gray-700 rounded px-2 py-1.5 text-xs text-white outline-none focus:ring-1 focus:ring-blue-500 placeholder-gray-500"
             />
-            <input
-              type="number" placeholder="经度 (如 116.4)"
-              value={customLng} onChange={e => setCustomLng(e.target.value)}
-              className="bg-gray-700 rounded px-2 py-1 text-xs text-white outline-none"
-            />
-            <button
-              onClick={handleLocationSubmit}
-              className="bg-blue-600 hover:bg-blue-500 rounded py-1 text-xs text-white"
-            >
-              确认
-            </button>
+            <div className="flex gap-1">
+              <input
+                type="number" placeholder="纬度 ±90"
+                value={coordLat}
+                onChange={e => { setCoordLat(e.target.value); setLocationMsg(null); }}
+                onKeyDown={e => e.key === 'Enter' && handleCoordSubmit()}
+                className="flex-1 min-w-0 bg-gray-700 rounded px-2 py-1.5 text-xs text-white outline-none focus:ring-1 focus:ring-blue-500 placeholder-gray-500"
+              />
+              <input
+                type="number" placeholder="经度 ±180"
+                value={coordLng}
+                onChange={e => { setCoordLng(e.target.value); setLocationMsg(null); }}
+                onKeyDown={e => e.key === 'Enter' && handleCoordSubmit()}
+                className="flex-1 min-w-0 bg-gray-700 rounded px-2 py-1.5 text-xs text-white outline-none focus:ring-1 focus:ring-blue-500 placeholder-gray-500"
+              />
+              <button
+                onClick={handleCoordSubmit}
+                className="bg-blue-600 hover:bg-blue-500 rounded px-2 py-1.5 text-xs text-white whitespace-nowrap"
+              >确认</button>
+            </div>
+            {locationMsg && (
+              <div className={`text-xs ${locationMsg.ok ? 'text-green-400' : 'text-red-400'}`}>
+                {locationMsg.text}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -204,15 +300,15 @@ export default function ControlPanel({
         <div className="text-xs text-gray-400 mb-1">观测时间</div>
         <DateTimeInput value={time} onChange={onTimeChange} disabled={mode === 'local'} />
         <div className="flex gap-1 mt-2">
-          <button onClick={() => onTimeChange(new Date(time.getTime() - stepMs * 10))}
+          <button onMouseDown={() => startHold(-stepMs * 10)} onMouseUp={stopHold} onMouseLeave={stopHold}
             className={btnCls} disabled={mode === 'local'}><IconBack2 /></button>
-          <button onClick={() => onTimeChange(new Date(time.getTime() - stepMs))}
+          <button onMouseDown={() => startHold(-stepMs)} onMouseUp={stopHold} onMouseLeave={stopHold}
             className={btnCls} disabled={mode === 'local'}><IconBack1 /></button>
           <button onClick={() => onTimeChange(new Date())}
             className="flex-1 bg-gray-700 hover:bg-gray-600 rounded py-1 text-xs">现在</button>
-          <button onClick={() => onTimeChange(new Date(time.getTime() + stepMs))}
+          <button onMouseDown={() => startHold(stepMs)} onMouseUp={stopHold} onMouseLeave={stopHold}
             className={btnCls} disabled={mode === 'local'}><IconFwd1 /></button>
-          <button onClick={() => onTimeChange(new Date(time.getTime() + stepMs * 10))}
+          <button onMouseDown={() => startHold(stepMs * 10)} onMouseUp={stopHold} onMouseLeave={stopHold}
             className={btnCls} disabled={mode === 'local'}><IconFwd2 /></button>
         </div>
         <div className="flex gap-1 mt-1">

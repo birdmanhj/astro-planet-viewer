@@ -37,8 +37,8 @@ export function useAstronomy(time, location) {
       // 计算八大行星
       const planets = PLANET_IDS.map(id => calcBody(id, astroTime, observer));
 
-      // 检测特殊天象
-      const phenomena = detectPhenomena(sun, planets);
+      // 检测特殊天象（包括日月食）
+      const phenomena = detectPhenomena(sun, moon, planets, astroTime);
 
       return { planets, sun, moon, phenomena };
     } catch (e) {
@@ -129,11 +129,111 @@ function calcBody(bodyId, astroTime, observer) {
   };
 }
 
-function detectPhenomena(sun, planets) {
+function detectPhenomena(sun, moon, planets, astroTime) {
   const phenomena = [];
   if (!sun || !planets.length) return phenomena;
 
   const sunLon = sun.helioLon || 0;
+
+  // 检测日食和月食
+  if (moon) {
+    // 计算太阳和月球的角距离（地平坐标系）
+    const sunMoonAngularDist = Math.sqrt(
+      Math.pow(sun.ra - moon.ra, 2) + Math.pow(sun.dec - moon.dec, 2)
+    );
+
+    // 日食：月球在太阳和地球之间（新月附近），且角距离很小
+    // 太阳和月球的视直径约为 0.5°，日食发生时角距离 < 2°
+    if (sunMoonAngularDist < 2.0) {
+      // 检查月相：新月附近（月球和太阳黄经接近）
+      const moonSunLonDiff = Math.abs(moon.helioLon - sun.ra);
+      const normalizedDiff = moonSunLonDiff > 180 ? 360 - moonSunLonDiff : moonSunLonDiff;
+
+      if (normalizedDiff < 15) { // 新月附近 ±15°
+        // 进一步检查：使用 Astronomy Engine 的日食搜索
+        try {
+          const searchStart = new Astronomy.AstroTime(new Date(astroTime.date.getTime() - 7 * 24 * 60 * 60 * 1000));
+          const searchEnd = new Astronomy.AstroTime(new Date(astroTime.date.getTime() + 7 * 24 * 60 * 60 * 1000));
+          const eclipse = Astronomy.SearchGlobalSolarEclipse(searchStart);
+
+          if (eclipse && eclipse.peak) {
+            const timeDiff = Math.abs(eclipse.peak.date.getTime() - astroTime.date.getTime());
+            // 如果日食在当前时间的 ±12 小时内
+            if (timeDiff < 12 * 60 * 60 * 1000) {
+              let eclipseType = '日食';
+              if (eclipse.kind === 'total') eclipseType = '日全食';
+              else if (eclipse.kind === 'annular') eclipseType = '日环食';
+              else if (eclipse.kind === 'partial') eclipseType = '日偏食';
+
+              phenomena.push({
+                type: 'solar_eclipse',
+                bodies: ['Sun', 'Moon'],
+                bodyZh: '太阳、月球',
+                description: eclipseType,
+                eclipseKind: eclipse.kind,
+                peakTime: eclipse.peak.date,
+              });
+            }
+          }
+        } catch (e) {
+          // 如果 API 调用失败，使用简单的几何判断
+          if (sunMoonAngularDist < 0.6) {
+            phenomena.push({
+              type: 'solar_eclipse',
+              bodies: ['Sun', 'Moon'],
+              bodyZh: '太阳、月球',
+              description: '可能发生日食',
+            });
+          }
+        }
+      }
+    }
+
+    // 月食：月球在地球阴影中（满月附近）
+    // 检查月相：满月时太阳和月球黄经相差约 180°
+    const moonSunLonDiff = Math.abs(moon.helioLon - sun.ra);
+    const normalizedDiff = moonSunLonDiff > 180 ? 360 - moonSunLonDiff : moonSunLonDiff;
+
+    if (Math.abs(normalizedDiff - 180) < 15) { // 满月附近 ±15°
+      // 检查月球是否接近黄道（地球阴影在黄道面上）
+      if (Math.abs(moon.helioLat) < 2.0) { // 月球黄纬 < 2°
+        try {
+          const searchStart = new Astronomy.AstroTime(new Date(astroTime.date.getTime() - 7 * 24 * 60 * 60 * 1000));
+          const eclipse = Astronomy.SearchLunarEclipse(searchStart);
+
+          if (eclipse && eclipse.peak) {
+            const timeDiff = Math.abs(eclipse.peak.date.getTime() - astroTime.date.getTime());
+            // 如果月食在当前时间的 ±12 小时内
+            if (timeDiff < 12 * 60 * 60 * 1000) {
+              let eclipseType = '月食';
+              if (eclipse.kind === 'total') eclipseType = '月全食';
+              else if (eclipse.kind === 'partial') eclipseType = '月偏食';
+              else if (eclipse.kind === 'penumbral') eclipseType = '半影月食';
+
+              phenomena.push({
+                type: 'lunar_eclipse',
+                bodies: ['Moon', 'Earth'],
+                bodyZh: '月球、地球',
+                description: eclipseType,
+                eclipseKind: eclipse.kind,
+                peakTime: eclipse.peak.date,
+              });
+            }
+          }
+        } catch (e) {
+          // 如果 API 调用失败，使用简单的几何判断
+          if (Math.abs(moon.helioLat) < 1.0 && Math.abs(normalizedDiff - 180) < 5) {
+            phenomena.push({
+              type: 'lunar_eclipse',
+              bodies: ['Moon', 'Earth'],
+              bodyZh: '月球、地球',
+              description: '可能发生月食',
+            });
+          }
+        }
+      }
+    }
+  }
 
   // 检测冲/合（外行星）
   const outerPlanets = ['Mars', 'Jupiter', 'Saturn', 'Uranus', 'Neptune'];

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { reverseGeocode } from '../utils/cityDb';
 
 const DEFAULT_LOCATION = {
   latitude: 39.9042,
@@ -19,13 +20,19 @@ export function useGeolocation() {
     setStatus('loading');
     navigator.geolocation.getCurrentPosition(
       (pos) => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        const fallbackName = `${lat.toFixed(2)}°N, ${lng.toFixed(2)}°E`;
         setLocation({
-          latitude: pos.coords.latitude,
-          longitude: pos.coords.longitude,
+          latitude: lat, longitude: lng,
           elevation: pos.coords.altitude || 50,
-          name: `${pos.coords.latitude.toFixed(2)}°N, ${pos.coords.longitude.toFixed(2)}°E`,
+          name: fallbackName,
         });
         setStatus('success');
+        // 异步反向地理编码，获取完整地址后更新 name
+        reverseGeocode(lat, lng).then(name => {
+          if (name) setLocation(prev => ({ ...prev, name }));
+        });
       },
       (err) => {
         if (err.code === err.PERMISSION_DENIED) {

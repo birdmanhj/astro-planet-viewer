@@ -21,6 +21,7 @@ export default function App() {
   const [selectedBodyId, setSelectedBodyId] = useState(null);
   const [isPanelOpen, setIsPanelOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  const [renderMode, setRenderMode] = useState('texture'); // 新增：渲染模式，默认真实模式
 
   const { location: geoLocation, status: geoStatus, requestLocation } = useGeolocation();
 
@@ -29,7 +30,7 @@ export default function App() {
   useEffect(() => {
     if (mode !== 'local') return;
     setTime(new Date());
-    const timer = setInterval(() => setTime(new Date()), 60000);
+    const timer = setInterval(() => setTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, [mode]);
 
@@ -44,6 +45,14 @@ export default function App() {
   }, []);
 
   const { planets, sun, moon, phenomena } = useAstronomy(time, location);
+
+  console.log('App: Astronomy data', {
+    planetsCount: planets?.length,
+    hasSun: !!sun,
+    hasMoon: !!moon,
+    location: location?.name,
+    time: time?.toISOString()
+  });
 
   const selectedBody = selectedBodyId
     ? [...(planets || []), sun, moon].find(b => b?.id === selectedBodyId)
@@ -65,6 +74,7 @@ export default function App() {
           phenomena={phenomena}
           locationStatus={geoStatus} onRequestLocation={requestLocation}
           isMobile={false}
+          renderMode={renderMode} onRenderModeChange={setRenderMode}
         />
       )}
 
@@ -105,6 +115,7 @@ export default function App() {
               moon={moon}
               selectedBody={selectedBodyId}
               onSelectBody={setSelectedBodyId}
+              renderMode={renderMode}
             />
           ) : (
             <SkyView
@@ -150,6 +161,7 @@ export default function App() {
           phenomena={phenomena}
           locationStatus={geoStatus} onRequestLocation={requestLocation}
           isMobile={true} isOpen={isPanelOpen} onToggle={() => setIsPanelOpen(!isPanelOpen)}
+          renderMode={renderMode} onRenderModeChange={setRenderMode}
         />
       )}
 
