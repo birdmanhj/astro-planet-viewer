@@ -257,8 +257,8 @@ export default function SkyView({ planets, sun, moon, location, time, onSelectBo
       return;
     }
     Promise.all([
-      fetch('/data/stars_bright.json').then(r => r.json()),
-      fetch('/data/constellations.json').then(r => r.json()),
+      fetch(`${import.meta.env.BASE_URL}data/stars_bright.json`).then(r => r.json()),
+      fetch(`${import.meta.env.BASE_URL}data/constellations.json`).then(r => r.json()),
     ]).then(([stars, constells]) => {
       starDataRef.current = stars;
       constellDataRef.current = constells;

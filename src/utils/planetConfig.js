@@ -4,6 +4,10 @@
 // axialTilt: 轴倾角（度），相对于轨道平面
 // rotationPeriod: 自转周期（小时）
 // textureUrl: 行星表面纹理（本地纹理文件）
+
+// 获取资源基础路径（支持 GitHub Pages 部署）
+const BASE_URL = import.meta.env.BASE_URL || '/';
+
 export const PLANETS = [
   {
     id: 'Mercury',
@@ -19,7 +23,7 @@ export const PLANETS = [
     perihelionLonDeg: 77.46,
     axialTilt: 0.034, // 几乎垂直
     rotationPeriod: 1407.6, // 58.6 地球日
-    textureUrl: '/textures/mercury.jpg',
+    textureUrl: `${BASE_URL}textures/mercury.jpg`,
   },
   {
     id: 'Venus',
@@ -35,7 +39,7 @@ export const PLANETS = [
     perihelionLonDeg: 131.53,
     axialTilt: 177.4, // 逆向自转
     rotationPeriod: 5832.5, // 243 地球日（逆向）
-    textureUrl: '/textures/venus.jpg',
+    textureUrl: `${BASE_URL}textures/venus.jpg`,
   },
   {
     id: 'Earth',
@@ -51,7 +55,7 @@ export const PLANETS = [
     perihelionLonDeg: 102.94,
     axialTilt: 23.44, // 黄赤交角
     rotationPeriod: 23.93, // 23小时56分
-    textureUrl: '/textures/earth.jpg',
+    textureUrl: `${BASE_URL}textures/earth.jpg`,
   },
   {
     id: 'Mars',
@@ -67,7 +71,7 @@ export const PLANETS = [
     perihelionLonDeg: 336.04,
     axialTilt: 25.19, // 与地球相似
     rotationPeriod: 24.62, // 24小时37分
-    textureUrl: '/textures/mars.jpg',
+    textureUrl: `${BASE_URL}textures/mars.jpg`,
   },
   {
     id: 'Jupiter',
@@ -83,7 +87,7 @@ export const PLANETS = [
     perihelionLonDeg: 14.75,
     axialTilt: 3.13, // 几乎垂直
     rotationPeriod: 9.93, // 约10小时
-    textureUrl: '/textures/jupiter.jpg',
+    textureUrl: `${BASE_URL}textures/jupiter.jpg`,
   },
   {
     id: 'Saturn',
@@ -100,8 +104,8 @@ export const PLANETS = [
     perihelionLonDeg: 92.43,
     axialTilt: 26.73, // 光环也倾斜
     rotationPeriod: 10.66, // 约10.7小时
-    textureUrl: '/textures/saturn.jpg',
-    ringTextureUrl: '/textures/saturn_ring.png',
+    textureUrl: `${BASE_URL}textures/saturn.jpg`,
+    ringTextureUrl: `${BASE_URL}textures/saturn_ring.png`,
   },
   {
     id: 'Uranus',
@@ -117,7 +121,7 @@ export const PLANETS = [
     perihelionLonDeg: 170.96,
     axialTilt: 97.77, // 几乎"躺着"自转
     rotationPeriod: 17.24, // 约17.2小时（逆向）
-    textureUrl: '/textures/uranus.jpg',
+    textureUrl: `${BASE_URL}textures/uranus.jpg`,
   },
   {
     id: 'Neptune',
@@ -133,7 +137,7 @@ export const PLANETS = [
     perihelionLonDeg: 44.97,
     axialTilt: 28.32,
     rotationPeriod: 16.11, // 约16小时
-    textureUrl: '/textures/neptune.jpg',
+    textureUrl: `${BASE_URL}textures/neptune.jpg`,
   },
 ];
 
@@ -146,7 +150,7 @@ export const SUN_CONFIG = {
   radius: 8,
   axialTilt: 7.25, // 相对于黄道面
   rotationPeriod: 609.12, // 约25.4地球日（赤道）
-  textureUrl: '/textures/sun.jpg',
+  textureUrl: `${BASE_URL}textures/sun.jpg`,
 };
 
 export const MOON_CONFIG = {
@@ -158,7 +162,7 @@ export const MOON_CONFIG = {
   radius: 1.0,
   axialTilt: 6.68, // 相对于黄道面
   rotationPeriod: 655.72, // 27.3地球日（潮汐锁定）
-  textureUrl: '/textures/moon.jpg',
+  textureUrl: `${BASE_URL}textures/moon.jpg`,
 };
 
 // B-V色指数 → RGB颜色（用于恒星颜色）
