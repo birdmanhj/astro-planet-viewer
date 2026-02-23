@@ -59,8 +59,17 @@ export function raDecToAltAz(raDeg, decDeg, latDeg, lstDeg) {
                  Math.cos(decRad) * Math.cos(latRad) * Math.cos(haRad);
   const altitude = Math.asin(Math.max(-1, Math.min(1, sinAlt))) * RAD2DEG;
 
-  const cosAz = (Math.sin(decRad) - Math.sin(altitude * DEG2RAD) * Math.sin(latRad)) /
-                (Math.cos(altitude * DEG2RAD) * Math.cos(latRad));
+  // 天顶/天底时分母为零，方位角需要特殊处理
+  const denom = Math.cos(altitude * DEG2RAD) * Math.cos(latRad);
+  if (Math.abs(denom) < 1e-10) {
+    // 在极点附近，方位角由时角决定
+    // 北天极（altitude ≈ 90°）：azimuth = 180° - HA（从南方看向北极）
+    // 南天极（altitude ≈ -90°）：azimuth = HA（从北方看向南极）
+    const azimuth = altitude > 0 ? (180 - ha + 360) % 360 : ha;
+    return { altitude, azimuth };
+  }
+
+  const cosAz = (Math.sin(decRad) - Math.sin(altitude * DEG2RAD) * Math.sin(latRad)) / denom;
   let azimuth = Math.acos(Math.max(-1, Math.min(1, cosAz))) * RAD2DEG;
 
   // 判断方位角象限
@@ -108,4 +117,20 @@ export function normalizeDeg(deg) {
 export function eclipticAngularDist(lon1, lon2) {
   const diff = Math.abs(normalizeDeg(lon1) - normalizeDeg(lon2));
   return diff > 180 ? 360 - diff : diff;
+}
+
+/**
+ * 赤道坐标（RA/Dec）→ 观测者坐标系 Vector3（通过 Alt/Az 中间转换）
+ * 使用已验证的 raDecToAltAz 和 altAzToVector3 管道，确保一致性
+ * @param {number} raDeg - 赤经（度）
+ * @param {number} decDeg - 赤纬（度）
+ * @param {number} latDeg - 观测者纬度（度）
+ * @param {number} lstDeg - 本地恒星时（度）
+ * @param {number} radius - 天球半径
+ * @returns {THREE.Vector3}
+ */
+export function raDecToVector3(raDeg, decDeg, latDeg, lstDeg, radius = 1000) {
+  // 使用已验证的转换管道
+  const { altitude, azimuth } = raDecToAltAz(raDeg, decDeg, latDeg, lstDeg);
+  return altAzToVector3(altitude, azimuth, radius);
 }

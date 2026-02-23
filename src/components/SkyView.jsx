@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
-import { altAzToVector3, raDecToAltAz, getLocalSiderealTime } from '../utils/coordinates';
+import { altAzToVector3, raDecToAltAz, raDecToVector3, getLocalSiderealTime } from '../utils/coordinates';
 import { bvToRgb, PLANETS } from '../utils/planetConfig';
 
 const PLANET_COLORS = Object.fromEntries(PLANETS.map(p => [p.id, p.color]));
@@ -21,7 +21,13 @@ export default function SkyView({ planets, sun, moon, location, time, onSelectBo
   const planetSpritesRef = useRef({});
   const isDraggingRef = useRef(false);
   const lastMouseRef = useRef({ x: 0, y: 0 });
-  const orientationRef = useRef(new THREE.Quaternion()); // identity = looking south at horizon
+  const velocityRef = useRef({ dx: 0, dy: 0 }); // 惯性速度（像素/帧）
+  // Initial orientation: looking north (-Z), tilted up so horizon sits at bottom 1/5 of screen
+  // FOV=75°, horizon at NDC y=-0.6 → tilt = arctan(0.6 * tan(37.5°)) ≈ 24.7°
+  const INIT_TILT = Math.atan(0.6 * Math.tan(75 * Math.PI / 360));
+  const orientationRef = useRef(
+    new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), INIT_TILT)
+  );
   const starDataRef = useRef(null); // 缓存星表数据
   const constellDataRef = useRef(null); // 缓存星座数据
   const hoveredConstellRef = useRef(null); // 当前悬停星座 id
@@ -57,7 +63,7 @@ export default function SkyView({ planets, sun, moon, location, time, onSelectBo
     // 地面
     const groundGeo = new THREE.CircleGeometry(1500, 64);
     const ground = new THREE.Mesh(groundGeo, new THREE.MeshBasicMaterial({
-      color: 0x0a1a0a, side: THREE.DoubleSide, transparent: true, opacity: 0.95
+      color: 0x0a1a0a, side: THREE.DoubleSide, transparent: true, opacity: 0.55
     }));
     ground.rotation.x = -Math.PI / 2;
     ground.position.y = -1;
@@ -91,7 +97,10 @@ export default function SkyView({ planets, sun, moon, location, time, onSelectBo
       ...PLANETS.filter(p => p.id !== 'Earth').map(p => ({ id: p.id, nameZh: p.nameZh, color: p.color })),
     ];
     allBodies.forEach(body => {
-      const sprite = createPlanetSprite(body.nameZh, body.color);
+      const isBig = body.id === 'Sun' || body.id === 'Moon';
+      const scale = isBig ? [55, 68] : [38, 48];
+      const fontSize = Math.round(18 * 68 / scale[1]); // compensate scale so text stays same world size
+      const sprite = createPlanetSprite(body.nameZh, body.color, scale, fontSize);
       sprite.userData = { bodyId: body.id };
       sprite.visible = false;
       scene.add(sprite);
@@ -99,10 +108,21 @@ export default function SkyView({ planets, sun, moon, location, time, onSelectBo
     });
 
     // 鼠标控制
-    const onMouseDown = (e) => { isDraggingRef.current = true; lastMouseRef.current = { x: e.clientX, y: e.clientY }; };
+    const onMouseDown = (e) => {
+      isDraggingRef.current = true;
+      lastMouseRef.current = { x: e.clientX, y: e.clientY };
+      velocityRef.current = { dx: 0, dy: 0 };
+    };
     const onMouseMove = (e) => {
       if (isDraggingRef.current) {
-        rotateSky(e.clientX - lastMouseRef.current.x, e.clientY - lastMouseRef.current.y, 0.003);
+        const dx = e.clientX - lastMouseRef.current.x;
+        const dy = e.clientY - lastMouseRef.current.y;
+        // EMA 平滑速度，减少抖动
+        velocityRef.current = {
+          dx: 0.7 * dx + 0.3 * velocityRef.current.dx,
+          dy: 0.7 * dy + 0.3 * velocityRef.current.dy,
+        };
+        rotateSky(dx, dy, 0.003);
         lastMouseRef.current = { x: e.clientX, y: e.clientY };
         return;
       }
@@ -123,7 +143,6 @@ export default function SkyView({ planets, sun, moon, location, time, onSelectBo
       let nearest = null, minAngle = Infinity;
       constellDataRef.current.forEach(c => {
         const { altitude, azimuth } = raDecToAltAz(c.center.ra, c.center.dec, lat, lst);
-        if (altitude < -15) return;
         const pos = altAzToVector3(altitude, azimuth, 1).normalize();
         const angle = Math.acos(Math.max(-1, Math.min(1, dir.dot(pos))));
         if (angle < minAngle) { minAngle = angle; nearest = c; }
@@ -141,11 +160,21 @@ export default function SkyView({ planets, sun, moon, location, time, onSelectBo
 
     // 触摸控制
     let lastTouches = null;
-    const onTouchStart = (e) => { e.preventDefault(); lastTouches = Array.from(e.touches); };
+    const onTouchStart = (e) => {
+      e.preventDefault();
+      lastTouches = Array.from(e.touches);
+      velocityRef.current = { dx: 0, dy: 0 };
+    };
     const onTouchMove = (e) => {
       e.preventDefault();
       if (e.touches.length === 1 && lastTouches?.length === 1) {
-        rotateSky(e.touches[0].clientX - lastTouches[0].clientX, e.touches[0].clientY - lastTouches[0].clientY, 0.004);
+        const dx = e.touches[0].clientX - lastTouches[0].clientX;
+        const dy = e.touches[0].clientY - lastTouches[0].clientY;
+        velocityRef.current = {
+          dx: 0.7 * dx + 0.3 * velocityRef.current.dx,
+          dy: 0.7 * dy + 0.3 * velocityRef.current.dy,
+        };
+        rotateSky(dx, dy, 0.004);
       } else if (e.touches.length === 2 && lastTouches?.length === 2) {
         const d1 = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
         const d0 = Math.hypot(lastTouches[0].clientX - lastTouches[1].clientX, lastTouches[0].clientY - lastTouches[1].clientY);
@@ -172,7 +201,18 @@ export default function SkyView({ planets, sun, moon, location, time, onSelectBo
     mount.addEventListener('touchmove', onTouchMove, { passive: false });
     mount.addEventListener('click', onClick);
 
-    const animate = () => { frameRef.current = requestAnimationFrame(animate); renderer.render(scene, camera); };
+    const animate = () => {
+      frameRef.current = requestAnimationFrame(animate);
+      // 惯性：松手后速度按阻尼系数衰减
+      if (!isDraggingRef.current) {
+        const { dx, dy } = velocityRef.current;
+        if (Math.abs(dx) > 0.05 || Math.abs(dy) > 0.05) {
+          rotateSky(dx, dy, 0.003);
+          velocityRef.current = { dx: dx * 0.90, dy: dy * 0.90 };
+        }
+      }
+      renderer.render(scene, camera);
+    };
     animate();
 
     const onResize = () => {
@@ -258,14 +298,21 @@ export default function SkyView({ planets, sun, moon, location, time, onSelectBo
   function rotateSky(dx, dy, factor) {
     const camera = cameraRef.current;
     if (!camera) return;
-    // Camera's current right vector in world space
-    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(orientationRef.current);
-    // Pitch: rotate around camera's local right axis — positive dy → positive angle → camera looks up → sky moves down
-    const pitchQ = new THREE.Quaternion().setFromAxisAngle(right, dy * factor);
-    // Yaw: rotate around world Y axis — positive dx → camera turns left → sky moves right
-    const yawQ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), dx * factor);
-    // Apply pitch first, then yaw
-    orientationRef.current.premultiply(pitchQ).premultiply(yawQ);
+
+    // 计算旋转轴（垂直于鼠标移动方向）
+    const rotationAxis = new THREE.Vector3(dy, dx, 0).normalize();
+
+    // 将旋转轴从屏幕空间转换到世界空间
+    rotationAxis.applyQuaternion(orientationRef.current);
+
+    // 计算旋转角度（基于鼠标移动距离）
+    const angle = Math.sqrt(dx * dx + dy * dy) * factor;
+
+    // 创建旋转四元数
+    const rotationQ = new THREE.Quaternion().setFromAxisAngle(rotationAxis, angle);
+
+    // 应用旋转
+    orientationRef.current.premultiply(rotationQ);
     camera.quaternion.copy(orientationRef.current);
   }
 
@@ -356,7 +403,7 @@ function updateConstellationLines(scene, constellData, location, time, hoveredId
       const pts = segment
         .map(([raDeg, decDeg]) => {
           const { altitude, azimuth } = raDecToAltAz(raDeg, decDeg, lat, lst);
-          return altitude > -5 ? altAzToVector3(altitude, azimuth, R) : null;
+          return altAzToVector3(altitude, azimuth, R);
         })
         .filter(Boolean);
       if (pts.length >= 2) {
@@ -367,11 +414,9 @@ function updateConstellationLines(scene, constellData, location, time, hoveredId
     // 悬停时在星座中心显示名称
     if (isHovered) {
       const { altitude, azimuth } = raDecToAltAz(c.center.ra, c.center.dec, lat, lst);
-      if (altitude > 3) {
-        const sp = createTextSprite(`${c.nameZh}  ${c.nameEn}`, '#aabbff', 18);
-        sp.position.copy(altAzToVector3(altitude + 4, azimuth, R));
-        group.add(sp);
-      }
+      const sp = createTextSprite(`${c.nameZh}  ${c.nameEn}`, '#aabbff', 18);
+      sp.position.copy(altAzToVector3(altitude + 4, azimuth, R));
+      group.add(sp);
     }
   });
 
@@ -404,18 +449,10 @@ function updateCelestialGrid(scene, location, time) {
     const pts = [];
     for (let i = 0; i <= 72; i++) {
       const raDeg = (i / 72) * 360;
-      const { altitude, azimuth } = raDecToAltAz(raDeg, decDeg, lat, lst);
-      if (altitude > -5) pts.push(altAzToVector3(altitude, azimuth, R));
-      else if (pts.length > 0) pts.push(null);
+      pts.push(raDecToVector3(raDeg, decDeg, lat, lst, R));
     }
     const mat = decDeg === 0 ? equatorMat : gridMat;
-    let seg = [];
-    const flush = () => {
-      if (seg.length >= 2) group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(seg), mat));
-      seg = [];
-    };
-    pts.forEach(p => p === null ? flush() : seg.push(p));
-    flush();
+    group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), mat));
 
     // 天赤道标签
     if (decDeg === 0) {
@@ -425,7 +462,7 @@ function updateCelestialGrid(scene, location, time) {
         const { altitude, azimuth } = raDecToAltAz(raDeg, 0, lat, lst);
         if (altitude > maxAlt) { maxAlt = altitude; labelPos = { altitude, azimuth }; }
       }
-      if (labelPos && maxAlt > 5) {
+      if (labelPos) {
         const sp = createTextSprite('天赤道', '#4477cc', 18);
         sp.position.copy(altAzToVector3(labelPos.altitude + 3, labelPos.azimuth, R));
         group.add(sp);
@@ -434,22 +471,25 @@ function updateCelestialGrid(scene, location, time) {
   });
 
   // 赤经线：每 2h（0h, 2h, 4h, ..., 22h）
+  // 分成两段绘制（南半球和北半球），避免视锥体裁剪问题
   for (let h = 0; h < 24; h += 2) {
     const raDeg = h * 15;
-    const pts = [];
-    for (let i = 0; i <= 36; i++) {
-      const decDeg = -90 + (i / 36) * 180;
-      const { altitude, azimuth } = raDecToAltAz(raDeg, decDeg, lat, lst);
-      if (altitude > -5) pts.push(altAzToVector3(altitude, azimuth, R));
-      else if (pts.length > 0) pts.push(null);
+
+    // 南半球段：-90° 到 0°
+    const ptsSouth = [];
+    for (let i = 0; i <= 18; i++) {
+      const decDeg = -90 + (i / 18) * 90;
+      ptsSouth.push(raDecToVector3(raDeg, decDeg, lat, lst, R));
     }
-    let seg = [];
-    const flush = () => {
-      if (seg.length >= 2) group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(seg), gridMat));
-      seg = [];
-    };
-    pts.forEach(p => p === null ? flush() : seg.push(p));
-    flush();
+    group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(ptsSouth), gridMat));
+
+    // 北半球段：0° 到 +90°
+    const ptsNorth = [];
+    for (let i = 0; i <= 18; i++) {
+      const decDeg = (i / 18) * 90;
+      ptsNorth.push(raDecToVector3(raDeg, decDeg, lat, lst, R));
+    }
+    group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(ptsNorth), gridMat));
   }
 
   scene.add(group);
@@ -478,34 +518,13 @@ function updateEclipticLine(scene, location, time) {
     const raDeg = Math.atan2(Math.sin(lon) * Math.cos(obliquity), Math.cos(lon)) * 180 / Math.PI;
     const decDeg = Math.asin(Math.sin(lon) * Math.sin(obliquity)) * 180 / Math.PI;
     const { altitude, azimuth } = raDecToAltAz(raDeg, decDeg, lat, lst);
-    // 只画地平线以上的部分（稍微延伸到地平线以下一点）
-    if (altitude > -10) {
-      points.push(altAzToVector3(altitude, azimuth, R));
-    } else if (points.length > 0) {
-      // 断开线段（不连接地平线以下的部分）
-      points.push(null);
-    }
+    points.push(altAzToVector3(altitude, azimuth, R));
   }
 
-  // 按 null 分段，分别创建 LineSegments
-  let seg = [];
   const group = new THREE.Group();
   group.name = 'eclipticLine';
   const mat = new THREE.LineBasicMaterial({ color: 0x886622, transparent: true, opacity: 0.7 });
-
-  const flush = () => {
-    if (seg.length >= 2) {
-      const geo = new THREE.BufferGeometry().setFromPoints(seg);
-      group.add(new THREE.Line(geo, mat));
-    }
-    seg = [];
-  };
-
-  points.forEach(p => {
-    if (p === null) flush();
-    else seg.push(p);
-  });
-  flush();
+  group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), mat));
   scene.add(group);
 
   // 黄道标签（在黄道最高点附近）
@@ -517,7 +536,7 @@ function updateEclipticLine(scene, location, time) {
     const { altitude, azimuth } = raDecToAltAz(raDeg, decDeg, lat, lst);
     if (altitude > maxAlt) { maxAlt = altitude; labelPos = { altitude, azimuth }; }
   }
-  if (labelPos && maxAlt > 5) {
+  if (labelPos) {
     const sprite = createTextSprite('黄道', '#aa7733', 20);
     sprite.position.copy(altAzToVector3(labelPos.altitude + 3, labelPos.azimuth, R));
     sprite.name = 'eclipticLabel';
@@ -525,26 +544,26 @@ function updateEclipticLine(scene, location, time) {
   }
 }
 
-function createPlanetSprite(nameZh, color) {
+function createPlanetSprite(nameZh, color, spriteScale = [38, 48], fontSize = 18) {
   const canvas = document.createElement('canvas');
-  canvas.width = 64; canvas.height = 80;
+  canvas.width = 96; canvas.height = 120;
   const ctx = canvas.getContext('2d');
   const hex = '#' + color.toString(16).padStart(6, '0');
   ctx.beginPath();
-  ctx.arc(32, 28, 14, 0, Math.PI * 2);
+  ctx.arc(48, 40, 22, 0, Math.PI * 2);
   ctx.fillStyle = hex;
   ctx.fill();
   ctx.strokeStyle = 'rgba(255,255,255,0.5)';
-  ctx.lineWidth = 1.5;
+  ctx.lineWidth = 2;
   ctx.stroke();
-  ctx.font = 'bold 13px sans-serif';
+  ctx.font = `bold ${fontSize}px sans-serif`;
   ctx.fillStyle = '#ffffff';
   ctx.textAlign = 'center';
-  ctx.fillText(nameZh, 32, 62);
+  ctx.fillText(nameZh, 48, 90);
   const tex = new THREE.CanvasTexture(canvas);
   const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
   const sprite = new THREE.Sprite(mat);
-  sprite.scale.set(30, 37, 1);
+  sprite.scale.set(spriteScale[0], spriteScale[1], 1);
   return sprite;
 }
 
