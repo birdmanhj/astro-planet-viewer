@@ -1,0 +1,137 @@
+# GitHub Copilot 代码审查配置
+# 用于自动审查 Pull Request 中的代码质量、安全性和最佳实践
+
+# 审查规则
+rules:
+  # 安全检查
+  - name: security-vulnerabilities
+    description: 检测潜在的安全漏洞（XSS、注入攻击等）
+    enabled: true
+    severity: error
+
+  - name: dependency-security
+    description: 检查依赖包的安全问题
+    enabled: true
+    severity: warning
+
+  # 代码质量
+  - name: code-complexity
+    description: 检测过于复杂的函数和组件
+    enabled: true
+    severity: warning
+    max_complexity: 15
+
+  - name: code-duplication
+    description: 检测重复代码
+    enabled: true
+    severity: info
+
+  - name: unused-code
+    description: 检测未使用的变量、函数和导入
+    enabled: true
+    severity: warning
+
+  # React 最佳实践
+  - name: react-hooks-rules
+    description: 检查 React Hooks 使用规范
+    enabled: true
+    severity: error
+
+  - name: react-performance
+    description: 检测性能问题（不必要的重渲染等）
+    enabled: true
+    severity: warning
+
+  - name: react-accessibility
+    description: 检查可访问性问题
+    enabled: true
+    severity: warning
+
+  # JavaScript/ES6+ 最佳实践
+  - name: modern-javascript
+    description: 推荐使用现代 JavaScript 语法
+    enabled: true
+    severity: info
+
+  - name: async-await-best-practices
+    description: 检查异步代码的最佳实践
+    enabled: true
+    severity: warning
+
+  # Three.js 特定规则
+  - name: threejs-memory-leaks
+    description: 检测 Three.js 内存泄漏（未 dispose 的资源）
+    enabled: true
+    severity: error
+
+  - name: threejs-performance
+    description: Three.js 性能优化建议
+    enabled: true
+    severity: info
+
+  # 代码风格
+  - name: consistent-naming
+    description: 检查命名一致性
+    enabled: true
+    severity: info
+
+  - name: comment-quality
+    description: 检查注释质量和必要性
+    enabled: true
+    severity: info
+
+# 审查范围
+scope:
+  include:
+    - "src/**/*.js"
+    - "src/**/*.jsx"
+    - "src/**/*.ts"
+    - "src/**/*.tsx"
+    - "src/**/*.css"
+
+  exclude:
+    - "node_modules/**"
+    - "dist/**"
+    - "build/**"
+    - "*.config.js"
+    - "*.config.ts"
+    - "public/**"
+
+# 自动修复
+auto_fix:
+  enabled: false  # 设置为 true 可自动修复简单问题
+  rules:
+    - unused-imports
+    - code-formatting
+
+# 审查触发条件
+triggers:
+  - pull_request
+  - push_to_protected_branch
+
+# 审查报告
+reporting:
+  format: github-check  # 在 PR 中显示为 GitHub Check
+  include_suggestions: true
+  include_code_snippets: true
+  max_comments_per_file: 10
+
+# 项目特定配置
+project_specific:
+  # 天文计算精度要求
+  - name: astronomy-precision
+    description: 确保天文计算使用足够的精度
+    pattern: "Math\\.(sin|cos|tan|atan2)"
+    suggestion: "考虑使用 astronomy-engine 库的高精度函数"
+
+  # Three.js 资源管理
+  - name: threejs-cleanup
+    description: 确保 Three.js 资源在组件卸载时清理
+    pattern: "new THREE\\."
+    check_for: "dispose()|remove()"
+
+  # 纹理加载
+  - name: texture-loading
+    description: 确保纹理加载使用正确的路径
+    pattern: "TextureLoader.*load"
+    check_for: "BASE_URL|import.meta.env.BASE_URL"

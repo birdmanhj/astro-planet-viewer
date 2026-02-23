@@ -1,0 +1,121 @@
+name: Copilot Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches:
+      - master
+      - main
+      - develop
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+
+jobs:
+  copilot-review:
+    runs-on: ubuntu-latest
+    name: Copilot Code Review
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 获取完整历史以便比较
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run ESLint
+        continue-on-error: true
+        run: npm run lint 2>&1 | tee eslint-report.txt || true
+
+      - name: Code Quality Check
+        continue-on-error: true
+        run: |
+          echo "## Code Quality Report" > quality-report.md
+          echo "" >> quality-report.md
+
+          # 检查文件大小
+          echo "### Large Files (>100KB)" >> quality-report.md
+          find src -type f -size +100k -exec ls -lh {} \; | awk '{print "- " $9 " (" $5 ")"}' >> quality-report.md || echo "None" >> quality-report.md
+          echo "" >> quality-report.md
+
+          # 检查代码复杂度（简单统计）
+          echo "### Complex Files (>500 lines)" >> quality-report.md
+          find src -name "*.js" -o -name "*.jsx" | xargs wc -l | sort -rn | head -10 | awk '$1 > 500 {print "- " $2 " (" $1 " lines)"}' >> quality-report.md || echo "None" >> quality-report.md
+          echo "" >> quality-report.md
+
+          # 检查 TODO 注释
+          echo "### TODO Comments" >> quality-report.md
+          grep -rn "TODO\|FIXME\|HACK" src --include="*.js" --include="*.jsx" | head -20 | sed 's/^/- /' >> quality-report.md || echo "None" >> quality-report.md
+
+      - name: Security Audit
+        continue-on-error: true
+        run: |
+          npm audit --json > audit-report.json || true
+          echo "## Security Audit" > security-report.md
+          if [ -s audit-report.json ]; then
+            echo "Security vulnerabilities found. Run \`npm audit\` for details." >> security-report.md
+          else
+            echo "No security vulnerabilities found." >> security-report.md
+          fi
+
+      - name: Comment PR with Reports
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+
+            let comment = '## 🤖 Copilot Code Review\n\n';
+
+            // ESLint 报告
+            if (fs.existsSync('eslint-report.txt')) {
+              const eslint = fs.readFileSync('eslint-report.txt', 'utf8');
+              if (eslint.trim()) {
+                comment += '### 📋 ESLint Report\n\n```\n' + eslint.substring(0, 2000) + '\n```\n\n';
+              }
+            }
+
+            // 代码质量报告
+            if (fs.existsSync('quality-report.md')) {
+              const quality = fs.readFileSync('quality-report.md', 'utf8');
+              comment += quality + '\n\n';
+            }
+
+            // 安全报告
+            if (fs.existsSync('security-report.md')) {
+              const security = fs.readFileSync('security-report.md', 'utf8');
+              comment += security + '\n\n';
+            }
+
+            comment += '---\n';
+            comment += '*This review was automatically generated. Please review the suggestions carefully.*';
+
+            // 发布评论
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
+      - name: Upload Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: code-review-reports
+          path: |
+            eslint-report.txt
+            quality-report.md
+            security-report.md
+            audit-report.json
+          retention-days: 30
