@@ -21,7 +21,7 @@ export default function SkyView({ planets, sun, moon, location, time, onSelectBo
   const planetSpritesRef = useRef({});
   const isDraggingRef = useRef(false);
   const lastMouseRef = useRef({ x: 0, y: 0 });
-  const sphericalRef = useRef({ theta: 0, phi: Math.PI / 2 });
+  const orientationRef = useRef(new THREE.Quaternion()); // identity = looking south at horizon
   const starDataRef = useRef(null); // 缓存星表数据
   const constellDataRef = useRef(null); // 缓存星座数据
   const hoveredConstellRef = useRef(null); // 当前悬停星座 id
@@ -48,7 +48,7 @@ export default function SkyView({ planets, sun, moon, location, time, onSelectBo
     const camera = new THREE.PerspectiveCamera(75, mount.clientWidth / mount.clientHeight, 0.1, 3000);
     camera.position.set(0, 0, 0);
     cameraRef.current = camera;
-    updateCameraDirection(camera, sphericalRef.current);
+    camera.quaternion.copy(orientationRef.current);
 
     // 天穹
     const skyGeo = new THREE.SphereGeometry(1500, 32, 16);
@@ -256,11 +256,17 @@ export default function SkyView({ planets, sun, moon, location, time, onSelectBo
   }, [planets, sun, moon]);
 
   function rotateSky(dx, dy, factor) {
-    const s = sphericalRef.current;
-    s.theta -= dx * factor;
-    // dy > 0 向下拖 → 天空向下移动 → 视线向上 → phi 减小
-    s.phi = Math.max(0.05, Math.min(Math.PI - 0.05, s.phi - dy * factor));
-    if (cameraRef.current) updateCameraDirection(cameraRef.current, s);
+    const camera = cameraRef.current;
+    if (!camera) return;
+    // Camera's current right vector in world space
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(orientationRef.current);
+    // Pitch: rotate around camera's local right axis — positive dy → positive angle → camera looks up → sky moves down
+    const pitchQ = new THREE.Quaternion().setFromAxisAngle(right, dy * factor);
+    // Yaw: rotate around world Y axis — positive dx → camera turns left → sky moves right
+    const yawQ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), dx * factor);
+    // Apply pitch first, then yaw
+    orientationRef.current.premultiply(pitchQ).premultiply(yawQ);
+    camera.quaternion.copy(orientationRef.current);
   }
 
   return (
@@ -275,13 +281,6 @@ export default function SkyView({ planets, sun, moon, location, time, onSelectBo
       </div>
     </div>
   );
-}
-
-function updateCameraDirection(camera, { theta, phi }) {
-  const x = Math.sin(phi) * Math.sin(theta);
-  const y = Math.cos(phi);
-  const z = -Math.sin(phi) * Math.cos(theta);
-  camera.lookAt(x * 100, y * 100, z * 100);
 }
 
 function updateStarField(scene, stars, location, time) {
